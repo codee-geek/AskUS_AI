@@ -1,0 +1,7 @@
+langchain
+langchain-community
+sentence-transformers
+pinecone-client
+pypdf
+python-docx
+unstructured
