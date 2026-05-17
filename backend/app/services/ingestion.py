@@ -10,18 +10,24 @@ from langchain_community.document_loaders import (
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 
-# =========================
-# CONFIG
-# =========================
+from pathlib import Path
 
-STAGING_PATH = "uploads/"
-PROCESSED_PATH = "processed/"
-FAILED_PATH = "failed/"
-VECTOR_DB_PATH = "vectorstore/"
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+STAGING_PATH = BASE_DIR / "storage" / "uploads"
+
+PROCESSED_PATH = BASE_DIR / "storage" / "processed"
+
+FAILED_PATH = BASE_DIR / "storage" / "failed"
+
+VECTOR_DB_PATH = BASE_DIR / "storage" / "vectorstore"
+
 SUPPORTED_EXTENSIONS = [".pdf", ".txt", ".docx"]
 skipped_files = []
 failed_files = []
@@ -38,6 +44,26 @@ for path in [
 ]:
     os.makedirs(path, exist_ok=True)
     
+    
+import os
+from fastapi import UploadFile
+
+
+#======================================================
+#==uploaded file saved
+#======================================================
+
+
+async def save_uploaded_file(file: UploadFile):
+
+    file_path = os.path.join(STAGING_PATH, file.filename)
+
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    return file_path
+
 # =========================
 # EMBEDDING MODEL
 # =========================
