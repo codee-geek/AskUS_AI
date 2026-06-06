@@ -9,7 +9,6 @@ from langchain_community.document_loaders import (
 )
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
@@ -164,7 +163,7 @@ def ingest_documents():
             
     if not all_chunks:
         print("No documents found")
-        return
+        return {"chunks": 0, "pages": 0, "total_chunks": 0}
 
     print("\nCreating embeddings and FAISS index...")
 
@@ -173,10 +172,17 @@ def ingest_documents():
         embedding=embedding_model
     )
 
-    vectorstore.save_local(VECTOR_DB_PATH)
+    vectorstore.save_local(str(VECTOR_DB_PATH))
 
     print("\nIngestion completed successfully")
     print(f"Total chunks stored: {len(all_chunks)}")
+
+    pages = sum(doc.metadata.get("page", 0) + 1 for doc in all_chunks if "page" in doc.metadata)
+    return {
+        "chunks": len(all_chunks),
+        "pages": pages or len(all_chunks),
+        "total_chunks": len(all_chunks),
+    }
 
 
 # =========================
