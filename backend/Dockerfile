@@ -20,10 +20,10 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY backend/ .
 
-RUN python -c "\
-from sentence_transformers import SentenceTransformer, CrossEncoder; \
-SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); \
-CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+# RUN python -c "\                 #too much space taking for img no neeed in img 
+# from sentence_transformers import SentenceTransformer, CrossEncoder; \
+# SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); \
+# CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 EXPOSE 8000
 
