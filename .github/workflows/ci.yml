@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Backend Docker Image
+        run: docker build -t rag-backend -f backend/Dockerfile .
+
+      - name: Build Frontend Docker Image
+        run: docker build -t rag-frontend -f frontend/Dockerfile .
