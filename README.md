@@ -1,6 +1,3 @@
-# RAGRetrival2
-
-Deployed Demo: https://askus-ai.duckdns.org/ 
 # AskUs AI – Intelligent Multi-Document RAG System
 
 AskUs AI is an enterprise-grade Retrieval-Augmented Generation (RAG) platform designed to answer questions across multiple documents with high accuracy and contextual understanding.
