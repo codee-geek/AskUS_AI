@@ -1,12 +1,10 @@
 from typing import List, Tuple
 
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 from core.config import (
     ANSWER_MAX_TOKENS,
     ANSWER_TEMPERATURE,
-    EMBEDDING_MODEL,
     HYBRID_FETCH_K,
     LLM_MODEL,
     OPENAI_API_KEY,
@@ -15,14 +13,10 @@ from core.config import (
 )
 from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
 from app.services.cloud_storage import sanitize_session_id
+from app.services.embeddings import get_embeddings
 from app.services.hybrid import reciprocal_rank_fusion
 from app.services.qdrant_store import search_chunks
 from app.services.reranker import cross_encoder_rerank
-
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL,
-    encode_kwargs={"normalize_embeddings": True},
-)
 
 
 def _bm25_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
@@ -36,7 +30,7 @@ def _bm25_search(user_query: str, session_key: str, fetch_k: int) -> List[Docume
 
 
 def _dense_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
-    query_vector = embeddings.embed_query(user_query)
+    query_vector = get_embeddings().embed_query(user_query)
     return search_chunks(query_vector=query_vector, session_id=session_key, limit=fetch_k)
 
 

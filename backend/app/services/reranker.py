@@ -1,11 +1,16 @@
 
+from functools import lru_cache
 from typing import List
 
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 
-# Initialize the cross-encoder model ONCE (at module level)
-cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
+@lru_cache(maxsize=1)
+def get_cross_encoder() -> CrossEncoder:
+    """Lazily load the cross-encoder on first use (no network at import time)."""
+    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
 
 def cross_encoder_rerank(
     query: str,
@@ -24,7 +29,7 @@ def cross_encoder_rerank(
             (query, f"[{section}]\n{doc.page_content}")
         )
 
-    rerank_scores = cross_encoder.predict(pairs)
+    rerank_scores = get_cross_encoder().predict(pairs)
 
     for doc, score in zip(docs, rerank_scores):
         doc.metadata["rerank_score"] = float(score)

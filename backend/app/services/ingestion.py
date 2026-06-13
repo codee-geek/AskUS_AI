@@ -12,20 +12,15 @@ from langchain_community.document_loaders import (
     TextLoader,
     UnstructuredWordDocumentLoader,
 )
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
 from app.services.cloud_storage import sanitize_session_id, upload_document
+from app.services.embeddings import get_embeddings
 from app.services.qdrant_store import upsert_chunks
-from core.config import CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL
+from core.config import CHUNK_SIZE, CHUNK_OVERLAP
 
 SUPPORTED_EXTENSIONS = [".pdf", ".txt", ".docx"]
-
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL,
-    encode_kwargs={"normalize_embeddings": True},
-)
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
@@ -157,7 +152,7 @@ def ingest_documents(
         s3_key=upload_result["key"],
         upload_time=upload_time,
     )
-    vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
+    vectors = get_embeddings().embed_documents([chunk.page_content for chunk in chunks])
     upsert_chunks(chunks, vectors)
 
     bm25_indexer = get_bm25_indexer(get_session_bm25_path(session_key))
