@@ -471,7 +471,7 @@ export default function RAGChat() {
             <div style={{ flex:1 }}>
               <div style={{ fontSize:"14px", fontWeight:500, color:"#d4dce8" }}>Document Q&A</div>
               <div style={{ fontSize:"12px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>
-                BM25 + Qdrant hybrid retrieval → reranker → GPT-4o
+                BM25 + Qdrant hybrid retrieval → reranker → GPT
               </div>
             </div>
 
