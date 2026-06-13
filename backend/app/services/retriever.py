@@ -3,7 +3,16 @@ from typing import List, Tuple
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
-from core.config import EMBEDDING_MODEL, HYBRID_FETCH_K, OPENAI_API_KEY, RRF_K, TOP_K
+from core.config import (
+    ANSWER_MAX_TOKENS,
+    ANSWER_TEMPERATURE,
+    EMBEDDING_MODEL,
+    HYBRID_FETCH_K,
+    LLM_MODEL,
+    OPENAI_API_KEY,
+    RRF_K,
+    TOP_K,
+)
 from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
 from app.services.cloud_storage import sanitize_session_id
 from app.services.hybrid import reciprocal_rank_fusion
@@ -84,7 +93,12 @@ def _build_answer(question: str, docs: List[Document]) -> str:
                 ("system", "Answer the question using only the provided context. If the answer is not in the context, say you don't know."),
                 ("human", "Context:\n{context}\n\nQuestion: {question}"),
             ])
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=OPENAI_API_KEY)
+            llm = ChatOpenAI(
+                model=LLM_MODEL,
+                temperature=ANSWER_TEMPERATURE,
+                max_tokens=ANSWER_MAX_TOKENS,
+                api_key=OPENAI_API_KEY,
+            )
             response = (prompt | llm).invoke({"context": context, "question": question})
             return response.content
         except Exception:

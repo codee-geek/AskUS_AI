@@ -13,12 +13,14 @@ if _root_env.exists():
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-LLM_MODEL = "gpt-4.1-mini"
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TOP_K = 5
 HYBRID_FETCH_K = int(os.getenv("HYBRID_FETCH_K", "10"))
 RRF_K = int(os.getenv("RRF_K", "60"))
 TEMPERATURE = 0.7
+ANSWER_TEMPERATURE = float(os.getenv("ANSWER_TEMPERATURE", "0.2"))
+ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "512"))
 SOURCE_DIRECTORY = "data"
 PERSIST_DIRECTORY = "vectorstore"
 MAX_INPUT_SIZE = 4096
