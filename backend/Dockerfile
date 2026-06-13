@@ -1,29 +1,37 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+# ---------- builder ----------
+FROM python:3.11-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    HF_HOME=/app/.cache/huggingface \
-    TRANSFORMERS_CACHE=/app/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libmagic1 \
-    poppler-utils \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r requirements.txt
 
+# ---------- runtime ----------
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
 COPY backend/ .
-
-# RUN python -c "\                 #too much space taking for img no neeed in img 
-# from sentence_transformers import SentenceTransformer, CrossEncoder; \
-# SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); \
-# CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 EXPOSE 8000
 

@@ -7,11 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import UploadFile
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredWordDocumentLoader,
-)
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
@@ -34,20 +31,27 @@ def calculate_content_hash(file_bytes: bytes) -> str:
     return hashlib.md5(file_bytes).hexdigest()
 
 
+def _load_docx(file_path: str):
+    """Load a .docx as plain text via python-docx (avoids the heavy unstructured dep)."""
+    import docx
+
+    document = docx.Document(file_path)
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text)
+    return [Document(page_content=text, metadata={"source": file_path})]
+
+
 def load_document(file_path: str):
     """Load document based on file extension."""
     ext = Path(file_path).suffix.lower()
 
     if ext == ".pdf":
-        loader = PyPDFLoader(file_path)
+        return PyPDFLoader(file_path).load()
     elif ext == ".txt":
-        loader = TextLoader(file_path, encoding="utf-8")
+        return TextLoader(file_path, encoding="utf-8").load()
     elif ext == ".docx":
-        loader = UnstructuredWordDocumentLoader(file_path)
+        return _load_docx(file_path)
     else:
         raise ValueError(f"Unsupported file type: {ext}")
-
-    return loader.load()
 
 
 async def save_uploaded_file(file: UploadFile, session_id: str = "default") -> str:

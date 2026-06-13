@@ -12,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: runtime
     container_name: rag-backend
     ports:
       - "8000:8000"
