@@ -5,7 +5,6 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import UploadFile
 from langchain_community.document_loaders import (
@@ -120,7 +119,9 @@ def ingest_documents(
 
     session_key = sanitize_session_id(session_id)
     file_hash = calculate_content_hash(file_bytes)
-    document_id = f"doc_{file_hash[:12]}_{uuid4().hex[:8]}"
+    # Deterministic id from content so re-uploading the same file maps to a
+    # stable S3 key and can be de-duplicated (keeps us within the free tier).
+    document_id = f"doc_{file_hash[:16]}"
     upload_time = datetime.now(timezone.utc).isoformat()
     temp_path = _write_temp_file(filename, file_bytes)
     try:

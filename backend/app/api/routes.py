@@ -1,9 +1,9 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from pydantic import BaseModel
 
-from app.services.cloud_storage import list_session_documents, sanitize_session_id
+from app.services.cloud_storage import sanitize_session_id
 from app.services.ingestion import ingest_documents
-from app.services.qdrant_store import count_session_chunks
+from app.services.qdrant_store import count_session_chunks, count_session_documents
 from app.services.retriever import query_documents
 
 router = APIRouter()
@@ -19,15 +19,15 @@ def _get_session_id(request: Request) -> str:
 
 
 def _vectorstore_stats(session_id: str):
+    # Derive counts from Qdrant (not S3) so the home/stats endpoint never
+    # issues billable S3 LIST requests on the hot path.
     try:
-        docs_indexed = len(list_session_documents(session_id))
-    except RuntimeError:
+        docs_indexed = count_session_documents(session_id)
+    except Exception:
         docs_indexed = 0
 
     try:
         total_chunks = count_session_chunks(session_id)
-    except RuntimeError:
-        total_chunks = 0
     except Exception:
         total_chunks = 0
 

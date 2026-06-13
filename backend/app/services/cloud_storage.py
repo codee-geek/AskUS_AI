@@ -6,6 +6,7 @@ from typing import Any
 
 import boto3
 from botocore.client import BaseClient
+from botocore.exceptions import ClientError
 
 from core.config import (
     AWS_ACCESS_KEY_ID,
@@ -60,6 +61,17 @@ def build_s3_key(session_id: str, document_id: str, filename: str) -> str:
     return f"{S3_PREFIX.rstrip('/')}/{session_key}/{document_id}/{filename}"
 
 
+def _s3_object_exists(client: BaseClient, bucket: str, key: str) -> bool:
+    """Return True if the S3 object already exists (cheap HEAD request)."""
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+
+
 def upload_document(
     *,
     file_bytes: bytes,
@@ -83,6 +95,18 @@ def upload_document(
 
     bucket_name = _require_bucket()
     s3_key = build_s3_key(session_id, document_id, filename)
+    client = get_s3_client()
+    result = {
+        "bucket": bucket_name,
+        "key": s3_key,
+        "uri": f"s3://{bucket_name}/{s3_key}",
+    }
+
+    # Skip the upload when the object already exists. document_id is derived
+    # from the content hash, so a matching key means identical bytes. This
+    # avoids redundant PUT requests and duplicate storage (free-tier safe).
+    if _s3_object_exists(client, bucket_name, s3_key):
+        return result
 
     extra_args: dict[str, Any] = {
         "Metadata": {
@@ -94,18 +118,14 @@ def upload_document(
     if content_type:
         extra_args["ContentType"] = content_type
 
-    get_s3_client().put_object(
+    client.put_object(
         Bucket=bucket_name,
         Key=s3_key,
         Body=file_bytes,
         **extra_args,
     )
 
-    return {
-        "bucket": bucket_name,
-        "key": s3_key,
-        "uri": f"s3://{bucket_name}/{s3_key}",
-    }
+    return result
 
 
 def list_session_documents(session_id: str) -> list[dict[str, str]]:
