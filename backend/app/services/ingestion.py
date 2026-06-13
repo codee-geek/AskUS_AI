@@ -1,194 +1,180 @@
-import os
-import hashlib
-from pathlib import Path
+from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import UploadFile
 from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
-    UnstructuredWordDocumentLoader
+    UnstructuredWordDocumentLoader,
 )
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
-from pathlib import Path
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-STAGING_PATH = BASE_DIR / "storage" / "uploads"
-
-PROCESSED_PATH = BASE_DIR / "storage" / "processed"
-
-FAILED_PATH = BASE_DIR / "storage" / "failed"
-
-VECTOR_DB_PATH = BASE_DIR / "storage" / "vectorstore"
+from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
+from app.services.cloud_storage import sanitize_session_id, upload_document
+from app.services.qdrant_store import upsert_chunks
+from core.config import CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL
 
 SUPPORTED_EXTENSIONS = [".pdf", ".txt", ".docx"]
-skipped_files = []
-failed_files = []
 
-# =========================
-# INITIALIZE DIRECTORIES
-# =========================
-
-for path in [
-    STAGING_PATH,
-    PROCESSED_PATH,
-    FAILED_PATH,
-    VECTOR_DB_PATH
-]:
-    os.makedirs(path, exist_ok=True)
-    
-    
-import os
-from fastapi import UploadFile
-
-
-#======================================================
-#==uploaded file saved
-#======================================================
-
-
-async def save_uploaded_file(file: UploadFile):
-
-    file_path = os.path.join(STAGING_PATH, file.filename)
-
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-
-    return file_path
-
-# =========================
-# EMBEDDING MODEL
-# =========================
-
-embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
+embeddings = HuggingFaceEmbeddings(
+    model_name=EMBEDDING_MODEL,
+    encode_kwargs={"normalize_embeddings": True},
 )
-
-# =========================
-# TEXT SPLITTER
-# =========================
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=800,
-    chunk_overlap=150,
-    separators=["\n\n", "\n", ".", " "]
+    chunk_size=CHUNK_SIZE,
+    chunk_overlap=CHUNK_OVERLAP,
+    separators=["\n\n", "\n", ".", " "],
 )
 
 
-# =========================
-# FILE HASHING
-# =========================
-
-def calculate_file_hash(file_path):
-    hasher = hashlib.md5()
-
-    with open(file_path, "rb") as f:
-        hasher.update(f.read())
-
-    return hasher.hexdigest()
+def calculate_content_hash(file_bytes: bytes) -> str:
+    """Calculate MD5 hash of uploaded bytes for stable document ids."""
+    return hashlib.md5(file_bytes).hexdigest()
 
 
-# =========================
-# DOCUMENT LOADER
-# =========================
-
-def load_document(file_path):
-
+def load_document(file_path: str):
+    """Load document based on file extension."""
     ext = Path(file_path).suffix.lower()
 
     if ext == ".pdf":
         loader = PyPDFLoader(file_path)
-
     elif ext == ".txt":
         loader = TextLoader(file_path, encoding="utf-8")
-
     elif ext == ".docx":
         loader = UnstructuredWordDocumentLoader(file_path)
-
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
     return loader.load()
 
 
-# =========================
-# MAIN INGESTION
-# =========================
+async def save_uploaded_file(file: UploadFile, session_id: str = "default") -> str:
+    """Kept for backward compatibility; uploads now go directly to S3 via ingest."""
+    content = await file.read()
+    document_id = f"doc_{calculate_content_hash(content)[:12]}"
+    upload_result = upload_document(
+        file_bytes=content,
+        filename=file.filename,
+        session_id=session_id,
+        document_id=document_id,
+        content_type=file.content_type,
+    )
+    return upload_result["uri"]
 
-def ingest_documents():
 
-    all_chunks = []
+def _write_temp_file(filename: str, file_bytes: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        tmp_file.write(file_bytes)
+        return tmp_file.name
 
-    processed_hashes = set()
 
-    for file_name in os.listdir(STAGING_PATH):
+def _prepare_chunks(
+    *,
+    documents,
+    filename: str,
+    session_id: str,
+    document_id: str,
+    s3_key: str,
+    upload_time: str,
+):
+    for doc in documents:
+        doc.metadata["source"] = filename
+        doc.metadata["session_id"] = session_id
+        doc.metadata["document_id"] = document_id
+        doc.metadata["upload_time"] = upload_time
+        doc.metadata["s3_key"] = s3_key
 
-        file_path = os.path.join(STAGING_PATH, file_name)
+    chunks = text_splitter.split_documents(documents)
+    for index, chunk in enumerate(chunks):
+        chunk.metadata["chunk_id"] = f"{document_id}-chunk-{index:04d}"
+        chunk.metadata["source"] = filename
+        chunk.metadata["session_id"] = session_id
+        chunk.metadata["document_id"] = document_id
+        chunk.metadata["upload_time"] = upload_time
+        chunk.metadata["s3_key"] = s3_key
+    return chunks
 
-        if not os.path.isfile(file_path):
-            continue
 
-        ext = Path(file_path).suffix.lower()
+def ingest_documents(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    session_id: str = "default",
+    content_type: str | None = None,
+) -> dict:
+    """
+    Ingest a single uploaded document by storing it in S3 and indexing chunks in Qdrant.
+    """
+    ext = Path(filename).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext}")
 
-        if ext not in SUPPORTED_EXTENSIONS:                 #react 
-            print(f"Skipping unsupported file: {file_name}")
-            continue
-        try:
-            file_hash = calculate_file_hash(file_path)
-            if file_hash in processed_hashes:
-                print(f"Duplicate skipped: {file_name}")
-                continue
-            
-            print(f"\nProcessing: {file_name}")
-            documents = load_document(file_path)
-            
-            for doc in documents:
-                doc.metadata["source"] = file_name
-            chunks = text_splitter.split_documents(documents)
-            
-            all_chunks.extend(chunks)
-            processed_hashes.add(file_hash)
-            
-            print(f"Chunks created: {len(chunks)}")
-            
-        except Exception as e:
-            print(f"Error processing {file_name}: {e}") #react 
-            
-    if not all_chunks:
-        print("No documents found")
-        return {"chunks": 0, "pages": 0, "total_chunks": 0}
+    session_key = sanitize_session_id(session_id)
+    file_hash = calculate_content_hash(file_bytes)
+    document_id = f"doc_{file_hash[:12]}_{uuid4().hex[:8]}"
+    upload_time = datetime.now(timezone.utc).isoformat()
+    temp_path = _write_temp_file(filename, file_bytes)
+    try:
+        documents = load_document(temp_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
-    print("\nCreating embeddings and FAISS index...")
+    if not documents:
+        return {
+            "chunks": 0,
+            "pages": 0,
+            "total_chunks": 0,
+            "docs_indexed": 0,
+            "session_id": session_key,
+            "document_id": document_id,
+            "indexed_files": [],
+        }
 
-    vectorstore = FAISS.from_documents(
-        documents=all_chunks,
-        embedding=embedding_model
+    upload_result = upload_document(
+        file_bytes=file_bytes,
+        filename=filename,
+        session_id=session_key,
+        document_id=document_id,
+        content_type=content_type,
     )
 
-    vectorstore.save_local(str(VECTOR_DB_PATH))
+    chunks = _prepare_chunks(
+        documents=documents,
+        filename=filename,
+        session_id=session_key,
+        document_id=document_id,
+        s3_key=upload_result["key"],
+        upload_time=upload_time,
+    )
+    vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
+    upsert_chunks(chunks, vectors)
 
-    print("\nIngestion completed successfully")
-    print(f"Total chunks stored: {len(all_chunks)}")
+    bm25_indexer = get_bm25_indexer(get_session_bm25_path(session_key))
+    bm25_indexer.extend_and_rebuild(chunks)
 
-    pages = sum(doc.metadata.get("page", 0) + 1 for doc in all_chunks if "page" in doc.metadata)
     return {
-        "chunks": len(all_chunks),
-        "pages": pages or len(all_chunks),
-        "total_chunks": len(all_chunks),
+        "chunks": len(chunks),
+        "pages": len(documents),
+        "total_chunks": len(chunks),
+        "docs_indexed": 1,
+        "session_id": session_key,
+        "document_id": document_id,
+        "indexed_files": [filename],
+        "s3_uri": upload_result["uri"],
+        "s3_key": upload_result["key"],
+        "upload_time": upload_time,
     }
 
 
-# =========================
-# ENTRY POINT
-# =========================
-
 if __name__ == "__main__":
-    ingest_documents()
-    
+    raise SystemExit("Run ingestion via the FastAPI upload route.")

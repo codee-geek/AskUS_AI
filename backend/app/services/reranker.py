@@ -1,7 +1,7 @@
 
 from typing import List
+
 from langchain_core.documents import Document
-from unstructured.partition.auto import partition
 from sentence_transformers import CrossEncoder
 
 # Initialize the cross-encoder model ONCE (at module level)

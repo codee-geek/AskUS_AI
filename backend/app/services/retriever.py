@@ -1,10 +1,13 @@
-from pathlib import Path
+from typing import List, Tuple
 
-from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.documents import Document
 
-from core.config import EMBEDDING_MODEL, OPENAI_API_KEY
-from app.services.ingestion import VECTOR_DB_PATH
+from core.config import EMBEDDING_MODEL, HYBRID_FETCH_K, OPENAI_API_KEY, RRF_K, TOP_K
+from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
+from app.services.cloud_storage import sanitize_session_id
+from app.services.hybrid import reciprocal_rank_fusion
+from app.services.qdrant_store import search_chunks
 from app.services.reranker import cross_encoder_rerank
 
 embeddings = HuggingFaceEmbeddings(
@@ -13,44 +16,61 @@ embeddings = HuggingFaceEmbeddings(
 )
 
 
-def _load_vectorstore():
-    index_file = Path(VECTOR_DB_PATH) / "index.faiss"
-    if not index_file.exists():
-        raise FileNotFoundError(f"Vector store not found at {VECTOR_DB_PATH}")
-
-    return FAISS.load_local(
-        str(VECTOR_DB_PATH),
-        embeddings,
-        allow_dangerous_deserialization=True,
-    )
-
-
-def run_query(user_query):
-    vectorstore = _load_vectorstore()
-
-    results = vectorstore.similarity_search_with_score(user_query, k=5)
-
-    docs = []
+def _bm25_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
+    indexer = get_bm25_indexer(get_session_bm25_path(session_key))
+    results = indexer.search(user_query, k=fetch_k)
+    docs: List[Document] = []
     for doc, score in results:
-        doc.metadata["faiss_score"] = float(score)
+        doc.metadata["bm25_score"] = float(score)
         docs.append(doc)
+    return docs
 
-    return cross_encoder_rerank(query=user_query, docs=docs, top_n=5)
+
+def _dense_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
+    query_vector = embeddings.embed_query(user_query)
+    return search_chunks(query_vector=query_vector, session_id=session_key, limit=fetch_k)
 
 
-def _format_sources(docs):
+def run_query(user_query: str, session_id: str = "default", k: int | None = None) -> List[Document]:
+    """
+    Hybrid retrieval: BM25 sparse + Qdrant dense, fused with RRF, then reranked.
+    Falls back to dense-only when no BM25 index exists for the session.
+    """
+    session_key = sanitize_session_id(session_id)
+    top_k = k or TOP_K
+    fetch_k = HYBRID_FETCH_K
+
+    bm25_docs = _bm25_search(user_query, session_key, fetch_k)
+    dense_docs = _dense_search(user_query, session_key, fetch_k)
+
+    if bm25_docs and dense_docs:
+        fused_docs = reciprocal_rank_fusion([bm25_docs, dense_docs], rrf_k=RRF_K)
+    elif dense_docs:
+        fused_docs = dense_docs
+    elif bm25_docs:
+        fused_docs = bm25_docs
+    else:
+        return []
+
+    return cross_encoder_rerank(query=user_query, docs=fused_docs, top_n=top_k)
+
+
+def _format_sources(docs: List[Document]) -> List[dict]:
+    """Format documents as sources for the response."""
     sources = []
     for doc in docs:
         snippet = doc.page_content[:240].replace("\n", " ").strip()
         sources.append({
             "doc": doc.metadata.get("source", "unknown"),
             "page": doc.metadata.get("page", 0) + 1,
+            "document_id": doc.metadata.get("document_id"),
             "snippet": snippet,
         })
     return sources
 
 
-def _build_answer(question, docs):
+def _build_answer(question: str, docs: List[Document]) -> str:
+    """Generate answer using LLM or fallback to best match."""
     if not docs:
         return "I could not find relevant information in the uploaded documents."
 
@@ -74,6 +94,10 @@ def _build_answer(question, docs):
     return f"Based on the most relevant section in your documents:\n\n{top}"
 
 
-def query_documents(question):
-    docs = run_query(question)
+def query_documents(question: str, session_id: str = "default") -> Tuple[str, List[dict]]:
+    """
+    Main entry point for querying documents.
+    Returns (answer, sources) tuple.
+    """
+    docs = run_query(question, session_id=session_id)
     return _build_answer(question, docs), _format_sources(docs)

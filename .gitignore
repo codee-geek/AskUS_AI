@@ -220,3 +220,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RAG runtime / generated storage artifacts
+backend/app/storage/qdrant/
+backend/app/storage/sessions/
+backend/app/storage/uploads/
+backend/app/storage/vectorstore/
+*.faiss
+*.pkl

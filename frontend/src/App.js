@@ -1,6 +1,19 @@
 import { useState, useRef, useEffect } from "react";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const SESSION_STORAGE_KEY = "rag-session-id";
+
+function getOrCreateSessionId() {
+  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (existing) return existing;
+
+  const sessionId =
+    window.crypto?.randomUUID?.() ||
+    `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  return sessionId;
+}
 
 // ─────────────────────────────────────────────────────────
 // SOURCE CHIP
@@ -89,7 +102,7 @@ function Message({ msg, onSourceClick }) {
               fontSize: "11px", color: "#5a6a7a", marginBottom: "8px",
               fontFamily: "'DM Mono', monospace", textTransform: "uppercase", letterSpacing: "0.08em",
             }}>
-              {msg.sources.length} source{msg.sources.length > 1 ? "s" : ""} retrieved · BM25 + FAISS
+              {msg.sources.length} source{msg.sources.length > 1 ? "s" : ""} retrieved · BM25 + Qdrant hybrid
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
               {msg.sources.map((s, i) => <SourceChip key={i} source={s} onClick={onSourceClick} />)}
@@ -132,7 +145,7 @@ function SourceModal({ source, onClose }) {
 
         {/* Retrieval method badge */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
-          {["BM25", "FAISS"].map(label => (
+          {["BM25", "Qdrant"].map(label => (
             <span key={label} style={{
               padding: "3px 8px", borderRadius: "6px",
               background: "rgba(207,139,92,0.1)", border: "1px solid rgba(207,139,92,0.2)",
@@ -189,7 +202,7 @@ function DocCard({ doc, onRemove }) {
 
         {doc.uploading && (
           <div style={{ fontSize: "11px", color: "#cf8b5c", fontFamily: "'DM Mono', monospace", marginTop: "2px" }}>
-            ⏳ Indexing with BM25 + FAISS…
+            ⏳ Uploading and indexing with BM25 + Qdrant…
           </div>
         )}
         {!doc.uploading && !doc.error && doc.chunks && (
@@ -222,9 +235,10 @@ function DocCard({ doc, onRemove }) {
 // ─────────────────────────────────────────────────────────
 
 export default function RAGChat() {
+  const sessionIdRef = useRef(getOrCreateSessionId());
   const [messages, setMessages] = useState([{
     role: "assistant",
-    text: "Hello! Upload your PDF documents using the sidebar. I use Hybrid Retrieval (BM25 + FAISS) to find the most relevant sections, then GPT-4o answers from the actual document content.",
+    text: "Hello! Upload your PDF documents using the sidebar. I use hybrid retrieval (BM25 + Qdrant) scoped to your session, then answer from the actual document content.",
     sources: [],
   }]);
   const [input,       setInput]       = useState("");
@@ -242,7 +256,9 @@ export default function RAGChat() {
 
   // Check backend health on mount
   useEffect(() => {
-    fetch(`${API}/`)
+    fetch(`${API}/`, {
+      headers: { "X-Session-ID": sessionIdRef.current },
+    })
       .then(r => r.json())
       .then(data => {
         setBackendOk(true);
@@ -266,7 +282,11 @@ export default function RAGChat() {
     formData.append("file", file);
 
     try {
-      const res  = await fetch(`${API}/upload`, { method: "POST", body: formData });
+      const res  = await fetch(`${API}/upload`, {
+        method: "POST",
+        headers: { "X-Session-ID": sessionIdRef.current },
+        body: formData,
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Upload failed");
 
@@ -275,7 +295,10 @@ export default function RAGChat() {
           ? { id: tempId, name: file.name, chunks: data.chunks, pages: data.pages, uploading: false }
           : d
       ));
-      setStats({ docs: data.total_chunks > 0 ? stats.docs + 1 : 0, chunks: data.total_chunks });
+      setStats({
+        docs: data.docs_indexed || 0,
+        chunks: data.total_chunks || 0,
+      });
     } catch (err) {
       setDocs(prev => prev.map(d =>
         d.id === tempId ? { ...d, uploading: false, error: err.message } : d
@@ -307,7 +330,10 @@ export default function RAGChat() {
     try {
       const res  = await fetch(`${API}/query`, {
         method:  "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-ID": sessionIdRef.current,
+        },
         body:    JSON.stringify({ question }),
       });
       const data = await res.json();
@@ -373,7 +399,7 @@ export default function RAGChat() {
               <div style={{ width:"30px", height:"30px", background:"linear-gradient(135deg,#cf8b5c,#d97757)", borderRadius:"8px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"14px", boxShadow:"0 4px 12px rgba(207,139,92,0.3)" }}>◆</div>
               <div>
                 <div style={{ fontSize:"14px", fontWeight:600, color:"#e2e8f0" }}>DocMind</div>
-                <div style={{ fontSize:"11px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>Hybrid RAG · BM25 + FAISS</div>
+                <div style={{ fontSize:"11px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>Hybrid RAG · BM25 + Qdrant</div>
               </div>
             </div>
 
@@ -445,7 +471,7 @@ export default function RAGChat() {
             <div style={{ flex:1 }}>
               <div style={{ fontSize:"14px", fontWeight:500, color:"#d4dce8" }}>Document Q&A</div>
               <div style={{ fontSize:"12px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>
-                Hybrid Retrieval · BM25 (0.6) + FAISS (0.4) → GPT-4o
+                BM25 + Qdrant hybrid retrieval → reranker → GPT-4o
               </div>
             </div>
 
@@ -465,7 +491,7 @@ export default function RAGChat() {
           {backendOk === false && (
             <div style={{ background:"rgba(232,112,112,0.08)", border:"1px solid rgba(232,112,112,0.2)", borderRadius:"10px", margin:"16px 24px 0", padding:"12px 16px", fontSize:"13px", color:"#e87070", fontFamily:"'DM Mono', monospace" }}>
               ⚠️ Backend not running. Open a terminal in the <strong>backend/</strong> folder and run:<br />
-              <strong>uvicorn main:app --reload</strong>
+              <strong>uvicorn app.main:app --reload</strong>
             </div>
           )}
 
@@ -482,7 +508,7 @@ export default function RAGChat() {
                   <div style={{ display:"flex", gap:"5px", alignItems:"center" }}>
                     {[0,1,2].map(i => <div key={i} style={{ width:"7px", height:"7px", borderRadius:"50%", background:"#cf8b5c", animation:`pulse 1.2s ease-in-out ${i*0.2}s infinite` }} />)}
                     <span style={{ fontSize:"12px", color:"#4a6a7a", marginLeft:"8px", fontFamily:"'DM Mono', monospace" }}>
-                      Running BM25 + FAISS hybrid retrieval…
+                      Running BM25 + Qdrant hybrid retrieval…
                     </span>
                   </div>
                 </div>
