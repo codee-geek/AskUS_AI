@@ -68,8 +68,7 @@ def _prepare_chunks(
     document_id: str,
     upload_time: str,
 ):
-    # semantic_section gives the reranker a short label for the chunk's origin
-    # (used in the cross-encoder prompt) instead of a constant "Unknown".
+    # semantic_section labels each chunk with its source document name.
     semantic_section = Path(filename).stem
 
     shared_metadata = {

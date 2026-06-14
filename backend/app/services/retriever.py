@@ -16,7 +16,6 @@ from app.services.embeddings import get_embeddings
 from app.services.hybrid import reciprocal_rank_fusion
 from app.services.local_storage import sanitize_session_id
 from app.services.pinecone_store import search_chunks
-from app.services.reranker import cross_encoder_rerank
 
 
 def _bm25_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
@@ -36,7 +35,7 @@ def _dense_search(user_query: str, session_key: str, fetch_k: int) -> List[Docum
 
 def run_query(user_query: str, session_id: str = "default", k: int | None = None) -> List[Document]:
     """
-    Hybrid retrieval: BM25 sparse + Pinecone dense, fused with RRF, then reranked.
+    Hybrid retrieval: BM25 sparse + Pinecone dense, fused with RRF.
     Falls back to dense-only when no BM25 index exists for the session.
     """
     session_key = sanitize_session_id(session_id)
@@ -55,7 +54,7 @@ def run_query(user_query: str, session_id: str = "default", k: int | None = None
     else:
         return []
 
-    return cross_encoder_rerank(query=user_query, docs=fused_docs, top_n=top_k)
+    return fused_docs[:top_k]
 
 
 def _format_sources(docs: List[Document]) -> List[dict]:

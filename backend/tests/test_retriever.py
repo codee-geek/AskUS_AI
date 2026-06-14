@@ -7,14 +7,9 @@ def _doc(chunk_id, text="text"):
     return Document(page_content=text, metadata={"chunk_id": chunk_id})
 
 
-def _identity_rerank(query, docs, top_n):
-    return docs[:top_n]
-
-
 def test_run_query_fuses_both_sources(monkeypatch):
     monkeypatch.setattr(retriever, "_bm25_search", lambda q, s, k: [_doc("a")])
     monkeypatch.setattr(retriever, "_dense_search", lambda q, s, k: [_doc("b")])
-    monkeypatch.setattr(retriever, "cross_encoder_rerank", _identity_rerank)
 
     out = retriever.run_query("q", session_id="s1")
     assert {d.metadata["chunk_id"] for d in out} == {"a", "b"}
@@ -23,7 +18,6 @@ def test_run_query_fuses_both_sources(monkeypatch):
 def test_run_query_dense_only(monkeypatch):
     monkeypatch.setattr(retriever, "_bm25_search", lambda q, s, k: [])
     monkeypatch.setattr(retriever, "_dense_search", lambda q, s, k: [_doc("b")])
-    monkeypatch.setattr(retriever, "cross_encoder_rerank", _identity_rerank)
 
     out = retriever.run_query("q", session_id="s1")
     assert [d.metadata["chunk_id"] for d in out] == ["b"]
@@ -32,7 +26,6 @@ def test_run_query_dense_only(monkeypatch):
 def test_run_query_bm25_only(monkeypatch):
     monkeypatch.setattr(retriever, "_bm25_search", lambda q, s, k: [_doc("a")])
     monkeypatch.setattr(retriever, "_dense_search", lambda q, s, k: [])
-    monkeypatch.setattr(retriever, "cross_encoder_rerank", _identity_rerank)
 
     out = retriever.run_query("q", session_id="s1")
     assert [d.metadata["chunk_id"] for d in out] == ["a"]

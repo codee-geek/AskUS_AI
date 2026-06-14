@@ -1,18 +1,20 @@
 from functools import lru_cache
 
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
-from core.config import EMBEDDING_MODEL
+from core.config import EMBEDDING_DIM, EMBEDDING_MODEL, OPENAI_API_KEY
 
 
 @lru_cache(maxsize=1)
-def get_embeddings() -> HuggingFaceEmbeddings:
-    """Lazily build a shared embeddings model.
+def get_embeddings() -> OpenAIEmbeddings:
+    """Lazily build a shared OpenAI embeddings client.
 
-    Instantiated on first use (not at import time) so importing the app does
-    not trigger a model download / HuggingFace network call.
+    Uses the OpenAI embeddings API instead of a local sentence-transformers
+    model, so the backend carries no torch dependency (smaller image, far less
+    RAM, no cold-start model download).
     """
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        encode_kwargs={"normalize_embeddings": True},
+    return OpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        dimensions=EMBEDDING_DIM,
+        api_key=OPENAI_API_KEY,
     )

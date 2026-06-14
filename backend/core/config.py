@@ -28,8 +28,10 @@ def _get_float(name: str, default: float) -> float:
 # Chunking + embeddings
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EMBEDDING_DIM = 384
+# OpenAI embeddings (no local torch model). text-embedding-3-small supports a
+# configurable output dimension; 1536 is its native size.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIM = _get_int("EMBEDDING_DIM", 1536)
 
 # Answer generation
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
