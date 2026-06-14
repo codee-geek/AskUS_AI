@@ -221,6 +221,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Local secret-setup script (filled with real values, never commit)
+scripts/set-github-secrets.sh
+
 # RAG runtime / generated storage artifacts
 backend/app/storage/qdrant/
 backend/app/storage/sessions/

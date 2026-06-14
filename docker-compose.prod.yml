@@ -27,7 +27,7 @@ services:
     image: ghcr.io/${GHCR_OWNER:-codee-geek}/rag-frontend:latest
     container_name: rag-frontend
     ports:
-      - "80:80"
+      - "3000:80"
     depends_on:
       backend:
         condition: service_healthy

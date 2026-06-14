@@ -135,6 +135,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ${{ secrets.EC2_APP_DIR }}
+            git fetch origin
+            git reset --hard origin/${{ github.ref_name }}
             export GHCR_OWNER=${{ github.repository_owner }}
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d
@@ -143,7 +145,7 @@ jobs:
       - name: Post-deploy smoke check
         run: |
           for attempt in $(seq 1 10); do
-            if curl -fsS "${{ secrets.DEPLOY_HEALTHCHECK_URL || 'https://askus-ai.duckdns.org/health' }}"; then
+            if curl -fsS "${{ secrets.DEPLOY_HEALTHCHECK_URL || 'https://askus-ai.duckdns.org/api/health' }}"; then
               echo "Health check passed"
               exit 0
             fi
