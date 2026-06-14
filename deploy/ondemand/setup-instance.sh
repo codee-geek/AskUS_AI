@@ -29,15 +29,23 @@ else
   echo "swap already present"
 fi
 
-echo "== 2. awscli =="
+echo "== 2. awscli (official v2 bundle; apt 'awscli' is gone on Ubuntu 24.04) =="
 if ! command -v aws >/dev/null 2>&1; then
-  sudo apt-get update -y && sudo apt-get install -y awscli
+  sudo apt-get update -y && sudo apt-get install -y unzip curl
+  TMP="$(mktemp -d)"
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TMP/awscliv2.zip"
+  unzip -q "$TMP/awscliv2.zip" -d "$TMP"
+  sudo "$TMP/aws/install" --update
+  rm -rf "$TMP"
 fi
 aws --version
 
 echo "== 3. install idle-stop script =="
 mkdir -p "$OND_DIR"
-cp "$(dirname "$0")/idle-stop.sh" "$OND_DIR/idle-stop.sh"
+SRC_IDLE="$(cd "$(dirname "$0")" && pwd)/idle-stop.sh"
+if [ "$SRC_IDLE" != "$OND_DIR/idle-stop.sh" ]; then
+  cp "$SRC_IDLE" "$OND_DIR/idle-stop.sh"
+fi
 chmod +x "$OND_DIR/idle-stop.sh"
 
 echo "== 4. cron: idle-stop every 5 min + DuckDNS on boot =="
