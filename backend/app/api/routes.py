@@ -1,16 +1,24 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-from pydantic import BaseModel
+import logging
 
-from app.services.cloud_storage import sanitize_session_id
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
+
 from app.services.ingestion import ingest_documents
-from app.services.qdrant_store import count_session_chunks, count_session_documents
+from app.services.local_storage import sanitize_session_id, touch_session
+from app.services.pinecone_store import count_session_chunks, count_session_documents
 from app.services.retriever import query_documents
+from app.services.session_cleanup import cleanup_session, delete_document
+from core.config import MAX_UPLOAD_MB
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=1, max_length=4000)
 
 
 def _get_session_id(request: Request) -> str:
@@ -19,8 +27,7 @@ def _get_session_id(request: Request) -> str:
 
 
 def _vectorstore_stats(session_id: str):
-    # Derive counts from Qdrant (not S3) so the home/stats endpoint never
-    # issues billable S3 LIST requests on the hot path.
+    # Derive counts from Pinecone so stats never touch local raw files.
     try:
         docs_indexed = count_session_documents(session_id)
     except Exception:
@@ -50,10 +57,26 @@ def home(request: Request):
     }
 
 
+@router.get("/health")
+def health():
+    """Lightweight liveness probe that does no I/O."""
+    return {"status": "ok"}
+
+
 @router.post("/upload")
 async def upload_file(request: Request, file: UploadFile = File(...)):
     session_id = _get_session_id(request)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided.")
+
     content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_MB} MB upload limit.",
+        )
 
     try:
         result = ingest_documents(
@@ -62,19 +85,24 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             session_id=session_id,
             content_type=file.content_type,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Ingestion failed for session %s", session_id)
+        raise HTTPException(
+            status_code=500, detail="Failed to process the uploaded document."
+        ) from None
 
+    touch_session(session_id)
     return {
         "filename": file.filename,
-        "saved_at": result.get("s3_uri"),
-        "chunks": result.get("chunks", 0) if result else 0,
-        "pages": result.get("pages", 0) if result else 0,
-        "total_chunks": result.get("total_chunks", 0) if result else 0,
-        "docs_indexed": result.get("docs_indexed", 0) if result else 0,
+        "saved_at": result.get("stored_uri"),
+        "chunks": result.get("chunks", 0),
+        "pages": result.get("pages", 0),
+        "total_chunks": result.get("total_chunks", 0),
+        "docs_indexed": result.get("docs_indexed", 0),
         "session_id": session_id,
-        "document_id": result.get("document_id") if result else None,
-        "s3_key": result.get("s3_key") if result else None,
+        "document_id": result.get("document_id"),
     }
 
 
@@ -82,7 +110,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
 def ingest(_: Request):
     raise HTTPException(
         status_code=400,
-        detail="Direct /ingest is no longer supported. Upload a file to trigger S3 + Qdrant ingestion.",
+        detail="Direct /ingest is no longer supported. Upload a file to trigger ingestion.",
     )
 
 
@@ -91,17 +119,55 @@ def ask_question(request: Request, body: QueryRequest):
     session_id = _get_session_id(request)
     try:
         answer, sources = query_documents(body.question, session_id=session_id)
-    except FileNotFoundError:
+    except Exception:
+        logger.exception("Query failed for session %s", session_id)
         raise HTTPException(
-            status_code=400,
-            detail="No documents indexed yet. Upload a PDF first.",
+            status_code=500, detail="Failed to answer the question."
         ) from None
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    touch_session(session_id)
     return {
         "question": body.question,
         "answer": answer,
         "sources": sources,
         "session_id": session_id,
     }
+
+
+@router.delete("/document/{document_id}")
+def remove_document(request: Request, document_id: str):
+    """Delete one document's local file, Pinecone vectors and BM25 chunks."""
+    session_id = _get_session_id(request)
+    try:
+        summary = delete_document(session_id, document_id)
+    except Exception:
+        logger.exception(
+            "Failed to delete document %s for session %s", document_id, session_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to delete the document."
+        ) from None
+
+    touch_session(session_id)
+    stats = _vectorstore_stats(session_id)
+    return {
+        "message": "Document deleted",
+        **summary,
+        "docs_indexed": stats["docs_indexed"],
+        "total_chunks": stats["total_chunks"],
+    }
+
+
+@router.delete("/session")
+def end_session(request: Request):
+    """End a session: delete its local files, Pinecone vectors and BM25 index."""
+    session_id = _get_session_id(request)
+    try:
+        summary = cleanup_session(session_id)
+    except Exception:
+        logger.exception("Cleanup failed for session %s", session_id)
+        raise HTTPException(
+            status_code=500, detail="Failed to clean up the session."
+        ) from None
+
+    return {"message": "Session cleared", **summary}

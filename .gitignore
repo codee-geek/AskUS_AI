@@ -228,3 +228,4 @@ backend/app/storage/uploads/
 backend/app/storage/vectorstore/
 *.faiss
 *.pkl
+*.sqlite

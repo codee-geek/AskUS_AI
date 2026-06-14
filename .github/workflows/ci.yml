@@ -72,12 +72,10 @@ jobs:
 
       - name: Run backend unit tests
         working-directory: backend
-        run: pytest tests/ -q
+        run: pytest tests/ -q --cov=app --cov=core --cov-report=term-missing
 
       - name: Verify backend imports
         working-directory: backend
-        env:
-          QDRANT_URL: ""
         run: python -c "from app.main import app; print('Backend imports OK')"
 
   docker:
@@ -122,3 +120,35 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [frontend, backend, docker]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    steps:
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ${{ secrets.EC2_APP_DIR }}
+            export GHCR_OWNER=${{ github.repository_owner }}
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f
+
+      - name: Post-deploy smoke check
+        run: |
+          for attempt in $(seq 1 10); do
+            if curl -fsS "${{ secrets.DEPLOY_HEALTHCHECK_URL || 'https://askus-ai.duckdns.org/health' }}"; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; retrying in 15s"
+            sleep 15
+          done
+          echo "Health check failed after deploy"
+          exit 1

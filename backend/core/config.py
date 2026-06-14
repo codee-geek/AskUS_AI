@@ -10,34 +10,49 @@ _root_env = Path(__file__).resolve().parents[2] / ".env"
 if _root_env.exists():
     load_dotenv(_root_env, override=False)
 
+
+def _get_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Chunking + embeddings
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
+
+# Answer generation
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANSWER_TEMPERATURE = _get_float("ANSWER_TEMPERATURE", 0.2)
+ANSWER_MAX_TOKENS = _get_int("ANSWER_MAX_TOKENS", 512)
+
+# Retrieval tuning
 TOP_K = 5
-HYBRID_FETCH_K = int(os.getenv("HYBRID_FETCH_K", "10"))
-RRF_K = int(os.getenv("RRF_K", "60"))
-TEMPERATURE = 0.7
-ANSWER_TEMPERATURE = float(os.getenv("ANSWER_TEMPERATURE", "0.2"))
-ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "512"))
-SOURCE_DIRECTORY = "data"
-PERSIST_DIRECTORY = "vectorstore"
-MAX_INPUT_SIZE = 4096
-MAX_TOTAL_TOKENS = 8192
+HYBRID_FETCH_K = _get_int("HYBRID_FETCH_K", 10)
+RRF_K = _get_int("RRF_K", 60)
 
-AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
-S3_PREFIX = os.getenv("S3_PREFIX", "rag-documents")
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
+# Upload limits
+MAX_UPLOAD_MB = _get_int("MAX_UPLOAD_MB", 20)
 
-QDRANT_URL = os.getenv("QDRANT_URL", "")
-QDRANT_LOCAL_PATH = os.getenv(
-    "QDRANT_LOCAL_PATH",
-    str(Path(__file__).resolve().parents[1] / "app" / "storage" / "qdrant"),
-)
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "rag_chunks")
-QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "10"))
+# Pinecone (dense vector store)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "rag-chunks")
+PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
+PINECONE_REGION = os.getenv("PINECONE_REGION", "us-east-1")
+
+# Session lifecycle. Raw documents are ephemeral local files; abandoned
+# sessions (no activity for this many hours) are swept and their files +
+# Pinecone vectors + BM25 index are deleted.
+SESSION_TTL_HOURS = _get_float("SESSION_TTL_HOURS", 24)
+SESSION_SWEEP_INTERVAL_MINUTES = _get_float("SESSION_SWEEP_INTERVAL_MINUTES", 60)

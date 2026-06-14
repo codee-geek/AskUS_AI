@@ -5,7 +5,7 @@ from typing import List, Optional
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from app.services.cloud_storage import sanitize_session_id
+from app.services.local_storage import sanitize_session_id
 
 # BM25 parameters (tuned for retrieval)
 BM25_PARAMS = {
@@ -69,6 +69,22 @@ class BM25Indexer:
         for doc in new_documents:
             merged[self._doc_key(doc)] = doc
         self.build(list(merged.values()))
+
+    def remove_document(self, document_id: str) -> int:
+        """Drop all chunks belonging to a document and rebuild. Returns removed count."""
+        self.load()
+        if not self._corpus:
+            return 0
+
+        remaining = [
+            doc
+            for doc in self._corpus
+            if str(doc.metadata.get("document_id")) != str(document_id)
+        ]
+        removed = len(self._corpus) - len(remaining)
+        if removed:
+            self.build(remaining)
+        return removed
 
     def _save(self) -> None:
         """Persist index and corpus to disk."""

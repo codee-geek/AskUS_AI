@@ -12,10 +12,10 @@ from core.config import (
     TOP_K,
 )
 from app.services.bm25 import get_bm25_indexer, get_session_bm25_path
-from app.services.cloud_storage import sanitize_session_id
 from app.services.embeddings import get_embeddings
 from app.services.hybrid import reciprocal_rank_fusion
-from app.services.qdrant_store import search_chunks
+from app.services.local_storage import sanitize_session_id
+from app.services.pinecone_store import search_chunks
 from app.services.reranker import cross_encoder_rerank
 
 
@@ -36,7 +36,7 @@ def _dense_search(user_query: str, session_key: str, fetch_k: int) -> List[Docum
 
 def run_query(user_query: str, session_id: str = "default", k: int | None = None) -> List[Document]:
     """
-    Hybrid retrieval: BM25 sparse + Qdrant dense, fused with RRF, then reranked.
+    Hybrid retrieval: BM25 sparse + Pinecone dense, fused with RRF, then reranked.
     Falls back to dense-only when no BM25 index exists for the session.
     """
     session_key = sanitize_session_id(session_id)

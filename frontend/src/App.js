@@ -102,7 +102,7 @@ function Message({ msg, onSourceClick }) {
               fontSize: "11px", color: "#5a6a7a", marginBottom: "8px",
               fontFamily: "'DM Mono', monospace", textTransform: "uppercase", letterSpacing: "0.08em",
             }}>
-              {msg.sources.length} source{msg.sources.length > 1 ? "s" : ""} retrieved · BM25 + Qdrant hybrid
+              {msg.sources.length} source{msg.sources.length > 1 ? "s" : ""} retrieved · BM25 + Pinecone hybrid
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
               {msg.sources.map((s, i) => <SourceChip key={i} source={s} onClick={onSourceClick} />)}
@@ -145,7 +145,7 @@ function SourceModal({ source, onClose }) {
 
         {/* Retrieval method badge */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
-          {["BM25", "Qdrant"].map(label => (
+          {["BM25", "Pinecone"].map(label => (
             <span key={label} style={{
               padding: "3px 8px", borderRadius: "6px",
               background: "rgba(207,139,92,0.1)", border: "1px solid rgba(207,139,92,0.2)",
@@ -202,7 +202,7 @@ function DocCard({ doc, onRemove }) {
 
         {doc.uploading && (
           <div style={{ fontSize: "11px", color: "#cf8b5c", fontFamily: "'DM Mono', monospace", marginTop: "2px" }}>
-            ⏳ Uploading and indexing with BM25 + Qdrant…
+            ⏳ Uploading and indexing with BM25 + Pinecone…
           </div>
         )}
         {!doc.uploading && !doc.error && doc.chunks && (
@@ -238,7 +238,7 @@ export default function RAGChat() {
   const sessionIdRef = useRef(getOrCreateSessionId());
   const [messages, setMessages] = useState([{
     role: "assistant",
-    text: "Hello! Upload your PDF documents using the sidebar. I use hybrid retrieval (BM25 + Qdrant) scoped to your session, then answer from the actual document content.",
+    text: "Hello! Upload your PDF documents using the sidebar. I use hybrid retrieval (BM25 + Pinecone) scoped to your session, then answer from the actual document content.",
     sources: [],
   }]);
   const [input,       setInput]       = useState("");
@@ -272,6 +272,25 @@ export default function RAGChat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Best-effort: tell the backend to delete this session's ephemeral files
+  // and vectors when the tab is closed.
+  useEffect(() => {
+    const handleUnload = () => {
+      const url = `${API}/session`;
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob([JSON.stringify({ session_id: sessionIdRef.current })], { type: "application/json" }));
+        } else {
+          fetch(url, { method: "DELETE", headers: { "X-Session-ID": sessionIdRef.current }, keepalive: true });
+        }
+      } catch {
+        /* ignore unload errors */
+      }
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, []);
+
   // ── File upload ───────────────────────────────────────
 
   const uploadFile = async (file) => {
@@ -292,7 +311,7 @@ export default function RAGChat() {
 
       setDocs(prev => prev.map(d =>
         d.id === tempId
-          ? { id: tempId, name: file.name, chunks: data.chunks, pages: data.pages, uploading: false }
+          ? { id: tempId, name: file.name, chunks: data.chunks, pages: data.pages, document_id: data.document_id, uploading: false }
           : d
       ));
       setStats({
@@ -316,7 +335,44 @@ export default function RAGChat() {
   const handleDragOver  = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); };
   const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
   const handleFileChange= (e) => { addFiles(e.target.files); e.target.value = ""; };
-  const removeDoc       = (id) => setDocs(prev => prev.filter(d => d.id !== id));
+  const removeDoc = async (id) => {
+    const target = docs.find(d => d.id === id);
+    // Optimistically remove from the sidebar.
+    setDocs(prev => prev.filter(d => d.id !== id));
+
+    // Only docs that finished indexing have a backend document_id to delete.
+    if (!target?.document_id) return;
+    try {
+      const res = await fetch(`${API}/document/${encodeURIComponent(target.document_id)}`, {
+        method: "DELETE",
+        headers: { "X-Session-ID": sessionIdRef.current },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStats({ docs: data.docs_indexed || 0, chunks: data.total_chunks || 0 });
+      }
+    } catch {
+      /* ignore network errors on delete */
+    }
+  };
+
+  const clearSession = async () => {
+    try {
+      await fetch(`${API}/session`, {
+        method: "DELETE",
+        headers: { "X-Session-ID": sessionIdRef.current },
+      });
+    } catch {
+      /* ignore network errors on clear */
+    }
+    setDocs([]);
+    setStats({ docs: 0, chunks: 0 });
+    setMessages([{
+      role: "assistant",
+      text: "Session cleared. Upload PDFs to start a fresh session.",
+      sources: [],
+    }]);
+  };
 
   // ── Send question ─────────────────────────────────────
 
@@ -399,7 +455,7 @@ export default function RAGChat() {
               <div style={{ width:"30px", height:"30px", background:"linear-gradient(135deg,#cf8b5c,#d97757)", borderRadius:"8px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"14px", boxShadow:"0 4px 12px rgba(207,139,92,0.3)" }}>◆</div>
               <div>
                 <div style={{ fontSize:"14px", fontWeight:600, color:"#e2e8f0" }}>DocMind</div>
-                <div style={{ fontSize:"11px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>Hybrid RAG · BM25 + Qdrant</div>
+                <div style={{ fontSize:"11px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>Hybrid RAG · BM25 + Pinecone</div>
               </div>
             </div>
 
@@ -451,6 +507,21 @@ export default function RAGChat() {
                 </div>
               )}
             </div>
+
+            {/* Clear session */}
+            <button
+              onClick={clearSession}
+              style={{
+                marginTop:"16px", width:"100%", padding:"9px 12px",
+                background:"rgba(232,112,112,0.08)", border:"1px solid rgba(232,112,112,0.2)",
+                borderRadius:"8px", color:"#e87070", cursor:"pointer",
+                fontSize:"12px", fontFamily:"'DM Mono', monospace",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background="rgba(232,112,112,0.14)"}
+              onMouseLeave={e => e.currentTarget.style.background="rgba(232,112,112,0.08)"}
+            >
+              Clear session &amp; delete documents
+            </button>
           </div>
         </div>
 
@@ -471,7 +542,7 @@ export default function RAGChat() {
             <div style={{ flex:1 }}>
               <div style={{ fontSize:"14px", fontWeight:500, color:"#d4dce8" }}>Document Q&A</div>
               <div style={{ fontSize:"12px", color:"#3a5a6a", fontFamily:"'DM Mono', monospace" }}>
-                BM25 + Qdrant hybrid retrieval → reranker → GPT
+                BM25 + Pinecone hybrid retrieval → reranker → GPT
               </div>
             </div>
 
@@ -508,7 +579,7 @@ export default function RAGChat() {
                   <div style={{ display:"flex", gap:"5px", alignItems:"center" }}>
                     {[0,1,2].map(i => <div key={i} style={{ width:"7px", height:"7px", borderRadius:"50%", background:"#cf8b5c", animation:`pulse 1.2s ease-in-out ${i*0.2}s infinite` }} />)}
                     <span style={{ fontSize:"12px", color:"#4a6a7a", marginLeft:"8px", fontFamily:"'DM Mono', monospace" }}>
-                      Running BM25 + Qdrant hybrid retrieval…
+                      Running BM25 + Pinecone hybrid retrieval…
                     </span>
                   </div>
                 </div>
