@@ -3,10 +3,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.services.activity import get_last_activity, idle_seconds, touch_activity
 from app.services.session_cleanup import sweep_stale_sessions
 from core.config import SESSION_SWEEP_INTERVAL_MINUTES, SESSION_TTL_HOURS
 
@@ -30,6 +31,9 @@ async def _session_sweep_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Start the idle clock at boot so a freshly woken instance gets a grace
+    # period before the auto-stop watcher can shut it down.
+    touch_activity()
     sweep_task = asyncio.create_task(_session_sweep_loop())
     try:
         yield
@@ -57,5 +61,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Paths that should NOT count as user activity (so the on-demand auto-stop
+# watcher can actually detect idleness). Health checks run constantly.
+_NON_ACTIVITY_PATHS = {"/health", "/activity"}
+
+
+@app.middleware("http")
+async def _track_activity(request: Request, call_next):
+    if request.url.path not in _NON_ACTIVITY_PATHS:
+        touch_activity()
+    return await call_next(request)
+
+
+@app.get("/activity")
+async def activity():
+    """Idle telemetry for the on-demand auto-stop watcher."""
+    return {"last_activity": get_last_activity(), "idle_seconds": idle_seconds()}
+
 
 app.include_router(router)
