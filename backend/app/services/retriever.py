@@ -17,6 +17,14 @@ from app.services.hybrid import reciprocal_rank_fusion
 from app.services.local_storage import sanitize_session_id
 from app.services.pinecone_store import search_chunks
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+LLM_FAILURE_MESSAGE = (
+    "Sorry, I couldn't generate an answer right now. "
+    "The sources below are the most relevant sections I found."
+)
 
 def _bm25_search(user_query: str, session_key: str, fetch_k: int) -> List[Document]:
     indexer = get_bm25_indexer(get_session_bm25_path(session_key))
@@ -70,7 +78,6 @@ def _format_sources(docs: List[Document]) -> List[dict]:
         })
     return sources
 
-
 def _build_answer(question: str, docs: List[Document]) -> str:
     """Generate answer using LLM or fallback to best match."""
     if not docs:
@@ -95,7 +102,8 @@ def _build_answer(question: str, docs: List[Document]) -> str:
             response = (prompt | llm).invoke({"context": context, "question": question})
             return response.content
         except Exception:
-            pass
+            logger.exception("LLM answer generation failed (model=%s)", LLM_MODEL)
+            return LLM_FAILURE_MESSAGE
 
     top = docs[0].page_content.strip()
     return f"Based on the most relevant section in your documents:\n\n{top}"
