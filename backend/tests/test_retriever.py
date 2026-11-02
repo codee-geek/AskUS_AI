@@ -58,3 +58,22 @@ def test_query_documents_formats_sources(monkeypatch):
     assert sources[0]["doc"] == "f.pdf"
     assert sources[0]["page"] == 1
     assert answer
+
+
+def test_build_answer_llm_failure_logs_and_hides_chunk(monkeypatch, caplog):
+    import langchain_openai
+
+    class FailingLLM:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("model shut down")
+
+    monkeypatch.setattr(retriever, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", FailingLLM)
+    docs = [Document(page_content="raw chunk text", metadata={})]
+
+    with caplog.at_level("ERROR"):
+        answer = retriever._build_answer("q", docs)
+
+    assert answer == retriever.LLM_FAILURE_MESSAGE
+    assert "raw chunk text" not in answer
+    assert "LLM answer generation failed" in caplog.text
