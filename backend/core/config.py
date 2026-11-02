@@ -34,7 +34,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_DIM = _get_int("EMBEDDING_DIM", 1536)
 
 # Answer generation
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.6-luna")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANSWER_TEMPERATURE = _get_float("ANSWER_TEMPERATURE", 0.2)
 ANSWER_MAX_TOKENS = _get_int("ANSWER_MAX_TOKENS", 512)
